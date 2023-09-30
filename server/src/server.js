@@ -39,8 +39,10 @@ app.use(session({
 }));
 
 app.use(express.json())
-const auditTrailMiddleware = (actionType) => async (req, res, next) => {
+
+const auditTrailMiddleware = async (req, res) => {
   const { email, username } = req.session?.user || {}
+  const { resInfo, actionType } = req.auditTrailInfo || {}
   const response = await knexInstance('auditTrail').insert({
     id: v4(),
     user_email: email,
@@ -48,47 +50,67 @@ const auditTrailMiddleware = (actionType) => async (req, res, next) => {
     action_type: actionType,
     timestamp: Date.now(),
   })
-  next()
+  res.send(resInfo)
 }
+
 app.use('/users', userRoutes)
 
-app.get('/checkLoggedUser', auditTrailMiddleware('CHECK_LOGGED_USER'), (req, res) => {
+app.get('/checkLoggedUser', (req, res, next) => {
   try {
     const user = req.session.user
     if (user) {
-      res.send('logado')
+      req.auditTrailInfo = {
+        resInfo: 'logado',
+        actionType: 'CHECK_LOGGED_USER'
+      }
+      next()
     } else {
-      res.send('deslogado')
+      req.auditTrailInfo = {
+        resInfo: 'deslogado',
+        actionType: 'CHECK_LOGGED_USER'
+      }
+      next()
     }
   } catch (error) {
     throw new Error(error.message)
   }
-})
+}, auditTrailMiddleware)
 
-app.post('/login', auditTrailMiddleware('USER_LOGGED'), asyncHandler(async (req, res) => {
+app.post('/login', asyncHandler(async (req, res,next) => {
   try {
     const { email, password } = req.body;
     const user = await knexInstance('users').where({ email, password });
-
     if (user.length > 0) {
       req.session.user = user[0];
-      res.json({ user: user[0], sessionId: req.sessionID })
+      req.auditTrailInfo = {
+        resInfo: { user: user[0], sessionId: req.sessionID },
+        actionType: 'LOGGED_USER'
+      }
+      next()
     } else {
-      res.status(401).json({ message: 'Invalid credentials' });
+      req.auditTrailInfo = {
+        resInfo: { message: 'Invalid credentials' },
+        actionType: 'LOGIN_ATTEMPT_FAIL'
+      }
+      next()
     }
   } catch (error) {
     throw new Error(error.message);
   }
-}));
+}), auditTrailMiddleware);
 
-app.get('/logout', auditTrailMiddleware('LOGOUT_USER'), asyncHandler(async (req, res) => {
+app.get('/logout', asyncHandler(async (req, res,next) => {
   try {
     req.session.user = null
-    res.json({ message: 'Logout success' })
+    req.auditTrailInfo = {
+      resInfo: { message: 'Logout success' },
+      actionType: 'USER_LOGOUT'
+    }
+    next()
   } catch (error) {
     throw new Error(error.message)
   }
-}))
+}), auditTrailMiddleware)
 
 app.use((err, req, res, next) => {
   if (err) {
