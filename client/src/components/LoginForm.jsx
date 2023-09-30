@@ -39,6 +39,15 @@ function LoginForm() {
     }
   }
 
+  const checkLoggedUser = async () => {
+    try {
+      const res = await api.get('checkLoggedUser')
+      console.log(res.data)
+    } catch (error) {
+      console.log(error.message)
+    }
+  }
+
   return (
     <Box maw={340} mx="auto">
       <form autoSave='true' onSubmit={form.onSubmit(handleSubmit)}>
@@ -59,6 +68,7 @@ function LoginForm() {
         />
 
         <Group justify="flex-end" mt="md">
+          <Button variant='light' onClick={checkLoggedUser}>Check logged user</Button>
           <Button type="submit">Submit</Button>
         </Group>
       </form>

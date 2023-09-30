@@ -1,63 +1,77 @@
 import express from 'express'
 import cors from 'cors'
 import session from 'express-session'
-import { v4 as uuidV4 } from 'uuid'
-import users from './mock/users.js'
 import { userRoutes } from './routes/index.js'
 import asyncHandler from 'express-async-handler'
 import { knexInstance } from './config/knexfile.js'
+import connectSessionKnex from 'connect-session-knex'
+import { v4, v5 } from 'uuid'
 
 const app = express()
-const allowedOrigin = 'http://localhost:5173'; // Replace with your client's origin
 
 app.use(cors({
-  origin: allowedOrigin,
+  origin: (origin, callback) => {
+    // Check if the origin is allowed
+    if (!origin) {
+      // If there's no origin, allow the request
+      callback(null, true);
+    } else {
+      // Check if the origin is allowed (you can implement your own logic here)
+      // For this example, we allow all origins with credentials
+      callback(null, true);
+    }
+  },
   methods: 'GET,POST,PUT,DELETE,OPTIONS',
   credentials: true, // Allow credentials (cookies)
 }));
 
+const KnexSessionStore = connectSessionKnex(session);
+const sessionStore = new KnexSessionStore({ knex: knexInstance });
+
 app.use(session({
   resave: false,
+  store: sessionStore,
   saveUninitialized: true,
   secret: 'keyboard cat',
   cookie: {
-    maxAge: 1000 * 60 * 60 * 24
+    maxAge: 5000
   }
 }));
 
-
 app.use(express.json())
+const auditTrailMiddleware = (actionType) => async (req, res, next) => {
+  const { email, username } = req.session?.user || {}
+  const response = await knexInstance('auditTrail').insert({
+    id: v4(),
+    user_email: email,
+    user_username: username,
+    action_type: actionType,
+    timestamp: Date.now(),
+  })
+  next()
+}
 app.use('/users', userRoutes)
 
-app.get('/checkLoggedUser', (req, res) => {
+app.get('/checkLoggedUser', auditTrailMiddleware('CHECK_LOGGED_USER'), (req, res) => {
   try {
     const user = req.session.user
     if (user) {
-      res.json(user)
+      res.send('logado')
     } else {
-      res.json({
-        message: 'user not logged',
-        sessionId: req.sessionID,
-        session: {
-          ...req.session
-        },
-      })
+      res.send('deslogado')
     }
   } catch (error) {
     throw new Error(error.message)
   }
 })
 
-app.post('/login', asyncHandler(async (req, res) => {
+app.post('/login', auditTrailMiddleware('USER_LOGGED'), asyncHandler(async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await knexInstance('users').where({ email, password });
 
     if (user.length > 0) {
       req.session.user = user[0];
-      req.session.save(() => {
-        console.log('saved')
-      })
       res.json({ user: user[0], sessionId: req.sessionID })
     } else {
       res.status(401).json({ message: 'Invalid credentials' });
@@ -67,7 +81,7 @@ app.post('/login', asyncHandler(async (req, res) => {
   }
 }));
 
-app.get('/logout', asyncHandler(async (req, res) => {
+app.get('/logout', auditTrailMiddleware('LOGOUT_USER'), asyncHandler(async (req, res) => {
   try {
     req.session.user = null
     res.json({ message: 'Logout success' })
